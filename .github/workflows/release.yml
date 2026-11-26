@@ -52,9 +52,19 @@ jobs:
             echo "signed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "$KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
+          # Pasted secrets often carry a stray space or line break; drop them.
+          keystore=$(printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]')
+          password=$(printf '%s' "$KEYSTORE_PASSWORD" | tr -d '[:space:]')
+          if ! printf '%s' "$keystore" | base64 --decode > android/upload-keystore.jks 2>/dev/null; then
+            echo "::error::KEYSTORE_BASE64 is not valid base64 (${#keystore} characters). It must be the base64 text of android/upload-keystore.jks."
+            exit 1
+          fi
+          if ! PW="$password" keytool -list -keystore android/upload-keystore.jks -storepass:env PW -alias upload > /dev/null 2>&1; then
+            echo "::error::The keystore could not be opened: KEYSTORE_BASE64 decodes to $(stat -c %s android/upload-keystore.jks) bytes and KEYSTORE_PASSWORD has ${#password} characters. One of the two secrets is wrong."
+            exit 1
+          fi
           printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=upload\nstoreFile=upload-keystore.jks\n' \
-            "$KEYSTORE_PASSWORD" "$KEYSTORE_PASSWORD" > android/key.properties
+            "$password" "$password" > android/key.properties
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
       - name: Build APK

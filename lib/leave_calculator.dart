@@ -1,16 +1,21 @@
 /// Leave maths for contract-based annual leave.
 ///
-/// A contract starts on a date (e.g. 1 March) and lasts one or more years.
-/// Each contract year is its own leave year with its own entitlement.
-/// Unused days carry from one year to the next INSIDE the same contract, up
-/// to the contract's carry limit. Nothing carries out of the last year of a
-/// contract automatically; a new contract can be given a manual
-/// "brought forward" balance instead.
+/// A contract starts on a date (e.g. 1 March) and lasts some years and
+/// months, e.g. 2 years 3 months. Each full contract year is a leave year
+/// with the full entitlement; left-over months at the end form a short final
+/// period whose entitlement is prorated.
+///
+/// Unused days of a period carry into the next period of the SAME contract,
+/// up to the contract's carry limit. Carried days are used first, expire at
+/// the end of the period they were carried into, and cannot be carried
+/// again. Nothing carries out of the last period of a contract; a new
+/// contract can be given a manual "brought forward" balance instead.
 library;
 
 import 'models.dart';
 
-/// One leave year inside a contract.
+/// One leave period inside a contract: a full year, or the short final
+/// period of a contract that does not end on a whole year.
 class LeaveYear {
   const LeaveYear({
     required this.contractId,
@@ -18,6 +23,7 @@ class LeaveYear {
     required this.count,
     required this.start,
     required this.end,
+    required this.months,
   });
 
   final String contractId;
@@ -25,17 +31,21 @@ class LeaveYear {
   /// 1-based position inside the contract.
   final int index;
 
-  /// Number of years in the contract.
+  /// Number of leave periods in the contract.
   final int count;
   final DateTime start;
   final DateTime end;
 
+  /// Length in months: 12, or fewer for a prorated final period.
+  final int months;
+
   String get key => '$contractId#$index';
   bool get isFinal => index == count;
+  bool get isPartial => months < 12;
   bool contains(DateTime d) => !d.isBefore(start) && !d.isAfter(end);
 }
 
-/// The balance of one leave year.
+/// The balance of one leave period.
 class YearSummary {
   const YearSummary({
     required this.year,
@@ -51,23 +61,26 @@ class YearSummary {
   });
 
   final LeaveYear year;
+
+  /// Entitlement for this period (prorated when the period is partial).
   final double entitlement;
 
-  /// Days carried in from the previous year (or brought forward).
+  /// Days carried in from the previous period (or brought forward).
   final double carriedIn;
 
   /// Leave that has already started.
   final double taken;
 
-  /// Leave booked for a future date.
+  /// Leave recorded for a future date.
   final double upcoming;
   final double carryMax;
 
-  /// Unused days that move on to the next year of the same contract.
+  /// Unused days of this period's own entitlement that move to the next
+  /// period of the same contract.
   final double carryOut;
   final bool isCurrent;
 
-  /// Days from today to the end of the year; null unless current.
+  /// Days from today to the end of the period; null unless current.
   final int? daysToEnd;
   final List<Leave> leaves;
 
@@ -75,30 +88,78 @@ class YearSummary {
   double get used => taken + upcoming;
   double get remaining => total - used;
 
-  /// Unused days that are lost when the year ends.
-  double get forfeit => (remaining > 0 ? remaining : 0) - carryOut;
+  /// Carried-in days are deducted first.
+  double get carryUsed => used < carriedIn ? used : carriedIn;
+  double get carryLeft => carriedIn - carryUsed;
+
+  /// What is used and left of this period's own entitlement.
+  double get baseUsed => used - carryUsed;
+  double get baseLeft => entitlement - baseUsed;
+
+  /// Unused days that are lost when the period ends: carried-in days that
+  /// were not used, plus own entitlement above the carry limit.
+  double get forfeit => remaining > 0 ? remaining - carryOut : 0;
+}
+
+/// [d] moved forward by [months], keeping the day of month where it exists.
+DateTime addMonths(DateTime d, int months) {
+  final total = d.year * 12 + (d.month - 1) + months;
+  final year = total ~/ 12;
+  final month = total % 12 + 1;
+  final lastDay = DateTime.utc(year, month + 1, 0).day;
+  return DateTime.utc(year, month, d.day > lastDay ? lastDay : d.day);
+}
+
+/// Entitlement for a period of [months] months. A fraction under half a day
+/// is dropped and half a day or more counts as a full day, as in section 60E
+/// of the Malaysian Employment Act.
+double proratedEntitlement(double daysPerYear, int months) {
+  if (months >= 12) return daysPerYear;
+  final raw = daysPerYear * months / 12;
+  final whole = raw.floorToDouble();
+  return raw - whole >= 0.5 ? whole + 1 : whole;
 }
 
 List<LeaveYear> leaveYears(Contract c) {
+  final total = c.totalMonths < 1 ? 12 : c.totalMonths;
+  final count = (total / 12).ceil();
   final years = <LeaveYear>[];
-  final count = c.years < 1 ? 1 : c.years;
   for (var k = 0; k < count; k++) {
-    final start = DateTime.utc(c.start.year + k, c.start.month, c.start.day);
-    final next = DateTime.utc(c.start.year + k + 1, c.start.month, c.start.day);
-    years.add(LeaveYear(
-      contractId: c.id,
-      index: k + 1,
-      count: count,
-      start: start,
-      end: next.subtract(const Duration(days: 1)),
-    ));
+    final months = (k + 1) * 12 <= total ? 12 : total - k * 12;
+    final start = addMonths(c.start, k * 12);
+    final next = addMonths(c.start, k * 12 + months);
+    years.add(
+      LeaveYear(
+        contractId: c.id,
+        index: k + 1,
+        count: count,
+        start: start,
+        end: next.subtract(const Duration(days: 1)),
+        months: months,
+      ),
+    );
   }
   return years;
 }
 
 DateTime contractEnd(Contract c) => leaveYears(c).last.end;
 
-/// Balance of every leave year of every contract, oldest first.
+/// `2 years 3 months`, `1 year`, `6 months`.
+String contractLength(Contract c) {
+  final parts = [
+    if (c.years > 0) '${c.years} ${c.years == 1 ? 'year' : 'years'}',
+    if (c.months > 0) '${c.months} ${c.months == 1 ? 'month' : 'months'}',
+  ];
+  return parts.isEmpty ? '1 year' : parts.join(' ');
+}
+
+/// `2-year contract`, `2-year 3-month contract`, `6-month contract`.
+String contractTitle(Contract c) {
+  final parts = [if (c.years > 0) '${c.years}-year', if (c.months > 0) '${c.months}-month'];
+  return '${parts.isEmpty ? '1-year' : parts.join(' ')} contract';
+}
+
+/// Balance of every leave period of every contract, oldest first.
 List<YearSummary> summarize(List<Contract> contracts, List<Leave> leaves, DateTime today) {
   final sorted = [...contracts]..sort((a, b) => a.start.compareTo(b.start));
   final sortedLeaves = [...leaves]..sort((a, b) => a.start.compareTo(b.start));
@@ -122,30 +183,36 @@ List<YearSummary> summarize(List<Contract> contracts, List<Leave> leaves, DateTi
         }
       }
 
-      final remaining = contract.daysPerYear + carry - taken - upcoming;
-      final unused = remaining > 0 ? remaining : 0.0;
+      final entitlement = proratedEntitlement(contract.daysPerYear, year.months);
+      final used = taken + upcoming;
+      // Carried-in days go first; only this period's own unused entitlement
+      // can move on.
+      final baseLeft = entitlement - (used > carry ? used - carry : 0);
+      final unused = baseLeft > 0 ? baseLeft : 0.0;
       final carryOut = year.isFinal ? 0.0 : (unused < carryMax ? unused : carryMax);
       final isCurrent = year.contains(today);
 
-      out.add(YearSummary(
-        year: year,
-        entitlement: contract.daysPerYear,
-        carriedIn: carry,
-        taken: taken,
-        upcoming: upcoming,
-        carryMax: carryMax,
-        carryOut: carryOut,
-        isCurrent: isCurrent,
-        daysToEnd: isCurrent ? daysBetween(today, year.end) : null,
-        leaves: mine,
-      ));
+      out.add(
+        YearSummary(
+          year: year,
+          entitlement: entitlement,
+          carriedIn: carry,
+          taken: taken,
+          upcoming: upcoming,
+          carryMax: carryMax,
+          carryOut: carryOut,
+          isCurrent: isCurrent,
+          daysToEnd: isCurrent ? daysBetween(today, year.end) : null,
+          leaves: mine,
+        ),
+      );
       carry = carryOut;
     }
   }
   return out;
 }
 
-/// The leave year containing [date], or null.
+/// The leave period containing [date], or null.
 LeaveYear? findYear(List<Contract> contracts, DateTime date) {
   for (final c in contracts) {
     for (final y in leaveYears(c)) {
@@ -156,7 +223,7 @@ LeaveYear? findYear(List<Contract> contracts, DateTime date) {
 }
 
 /// Why a leave does not fit the contracts, or null if it fits.
-/// A leave must sit entirely inside one leave year.
+/// A leave must sit entirely inside one leave period.
 String? leaveProblem(List<Contract> contracts, DateTime start, DateTime end) {
   if (end.isBefore(start)) return 'The last day is before the first day.';
   final year = findYear(contracts, start);
@@ -165,7 +232,7 @@ String? leaveProblem(List<Contract> contracts, DateTime start, DateTime end) {
   }
   if (end.isAfter(year.end)) {
     final next = year.end.add(const Duration(days: 1));
-    return 'This leave runs past the end of the leave year (${prettyDate(year.end)}). '
+    return 'This leave runs past the end of the contract year (${prettyDate(year.end)}). '
         'Enter it as two leaves: one up to ${prettyDate(year.end)} and one from ${prettyDate(next)}.';
   }
   return null;
@@ -194,13 +261,14 @@ String? checkLeave(List<Contract> contracts, List<Leave> leaves, Leave leave) {
 
 /// Checks a contract before saving. Returns the problem, or null if valid.
 String? checkContract(List<Contract> contracts, List<Leave> leaves, Contract contract) {
-  if (contract.years < 1 || contract.years > 10) {
-    return 'Contract length must be between 1 and 10 years.';
+  if (contract.years < 0 || contract.years > 10 || contract.months < 0 || contract.months > 11) {
+    return 'Contract length must be 0-10 years and 0-11 months.';
   }
+  if (contract.totalMonths < 1) return 'The contract must be at least 1 month long.';
   if (contract.daysPerYear <= 0 || contract.daysPerYear > 366) {
     return 'Days per year must be between 1 and 366.';
   }
-  if (contract.carryMax < 0) return 'Carry-over limit cannot be negative.';
+  if (contract.carryMax < 0) return 'Carry-forward limit cannot be negative.';
   if (contract.broughtForward < 0) return 'Days brought forward cannot be negative.';
 
   final next = [
@@ -218,7 +286,7 @@ String? checkContract(List<Contract> contracts, List<Leave> leaves, Contract con
   for (final leave in leaves) {
     if (leaveProblem(next, leave.start, leave.end) != null) {
       return 'Your leave on ${prettyRange(leave.start, leave.end)} would no longer fit inside a '
-          'leave year. Change or delete that leave first.';
+          'contract year. Change or delete that leave first.';
     }
   }
   return null;
@@ -247,7 +315,11 @@ DateTime latestAnniversary(DateTime today, int month, int day) {
 
 // --- Formatting --------------------------------------------------------------
 
-const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthNamesLong = [
+  'January', 'February', 'March', 'April', 'May', 'June', //
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 /// `16` for whole numbers, `5.5` for halves.
@@ -257,7 +329,10 @@ String formatDays(double v) => v == v.roundToDouble() ? v.round().toString() : v
 String daysLabel(double v) => '${formatDays(v)} ${v == 1 ? 'day' : 'days'}';
 
 /// `1 Mar 2026`.
-String prettyDate(DateTime d) => '${d.day} ${_months[d.month - 1]} ${d.year}';
+String prettyDate(DateTime d) => '${d.day} ${monthNames[d.month - 1]} ${d.year}';
+
+/// `1 Mar`.
+String shortDate(DateTime d) => '${d.day} ${monthNames[d.month - 1]}';
 
 /// `Mon, 1 Mar 2026`.
 String prettyDateLong(DateTime d) => '${_weekdays[d.weekday - 1]}, ${prettyDate(d)}';
@@ -267,6 +342,6 @@ String prettyDateLong(DateTime d) => '${_weekdays[d.weekday - 1]}, ${prettyDate(
 String prettyRange(DateTime a, DateTime b) {
   if (a == b) return prettyDate(a);
   if (a.year != b.year) return '${prettyDate(a)} – ${prettyDate(b)}';
-  if (a.month != b.month) return '${a.day} ${_months[a.month - 1]} – ${prettyDate(b)}';
+  if (a.month != b.month) return '${a.day} ${monthNames[a.month - 1]} – ${prettyDate(b)}';
   return '${a.day} – ${prettyDate(b)}';
 }

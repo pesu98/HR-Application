@@ -37,9 +37,9 @@ class FakeSource implements UpdateSource {
 }
 
 AppUpdate release(String version) => AppUpdate(
-      version: version,
-      apkUrl: Uri.parse('https://github.com/$updateRepo/releases/download/v$version/annual-leave.apk'),
-    );
+  version: version,
+  apkUrl: Uri.parse('https://github.com/$updateRepo/releases/download/v$version/annual-leave.apk'),
+);
 
 Map<String, Object?> githubRelease({
   String tag = 'v1.0.12',
@@ -47,19 +47,15 @@ Map<String, Object?> githubRelease({
   String? url,
   bool draft = false,
   bool prerelease = false,
-}) =>
-    {
-      'tag_name': tag,
-      'draft': draft,
-      'prerelease': prerelease,
-      'assets': [
-        {'name': 'notes.txt', 'browser_download_url': 'https://github.com/$updateRepo/releases/download/$tag/notes.txt'},
-        {
-          'name': asset,
-          'browser_download_url': url ?? 'https://github.com/$updateRepo/releases/download/$tag/$asset',
-        },
-      ],
-    };
+}) => {
+  'tag_name': tag,
+  'draft': draft,
+  'prerelease': prerelease,
+  'assets': [
+    {'name': 'notes.txt', 'browser_download_url': 'https://github.com/$updateRepo/releases/download/$tag/notes.txt'},
+    {'name': asset, 'browser_download_url': url ?? 'https://github.com/$updateRepo/releases/download/$tag/$asset'},
+  ],
+};
 
 void main() {
   group('compareVersions', () {
@@ -194,8 +190,8 @@ void main() {
     expect(find.textContaining('Tap Install'), findsOneWidget);
     expect(find.text('Open again'), findsOneWidget);
 
-    // The settings screen shows the installed version.
-    await tester.tap(find.byTooltip('Settings'));
+    // The Contract tab shows the installed version.
+    await tester.tap(find.text('Contract'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.textContaining('Version 1.0.3.'), 200);
     expect(find.textContaining('Version 1.0.3.'), findsOneWidget);

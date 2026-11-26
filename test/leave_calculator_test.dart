@@ -4,8 +4,23 @@ import 'package:leave_tracker/models.dart';
 
 DateTime d(String iso) => parseIsoDate(iso)!;
 
-Contract contract(String id, String start, int years, {double bf = 0, double perYear = 25, double carryMax = 10}) =>
-    Contract(id: id, start: d(start), years: years, daysPerYear: perYear, carryMax: carryMax, broughtForward: bf);
+Contract contract(
+  String id,
+  String start,
+  int years, {
+  int months = 0,
+  double bf = 0,
+  double perYear = 25,
+  double carryMax = 10,
+}) => Contract(
+  id: id,
+  start: d(start),
+  years: years,
+  months: months,
+  daysPerYear: perYear,
+  carryMax: carryMax,
+  broughtForward: bf,
+);
 
 int _leaveId = 0;
 Leave leave(String start, String end, double days) =>
@@ -94,6 +109,118 @@ void main() {
     });
   });
 
+  group('contract with extra months', () {
+    test('2 years 3 months ends with a prorated 3-month period', () {
+      final years = leaveYears(contract('c', '2026-03-01', 2, months: 3));
+      expect(years, hasLength(3));
+      expect(isoDate(years[1].end), '2028-02-29');
+      expect(isoDate(years[2].start), '2028-03-01');
+      expect(isoDate(years[2].end), '2028-05-31');
+      expect(years[2].months, 3);
+      expect(years[2].isPartial, isTrue);
+      expect(years[2].isFinal, isTrue);
+      expect(years[0].isPartial, isFalse);
+      expect(contractLength(contract('c', '2026-03-01', 2, months: 3)), '2 years 3 months');
+      expect(contractLength(contract('c', '2026-03-01', 1)), '1 year');
+      expect(contractLength(contract('c', '2026-03-01', 0, months: 6)), '6 months');
+      expect(contractTitle(contract('c', '2026-03-01', 2, months: 3)), '2-year 3-month contract');
+      expect(contractTitle(contract('c', '2026-03-01', 2)), '2-year contract');
+    });
+
+    test('prorated entitlement drops under half a day and rounds up from half', () {
+      expect(proratedEntitlement(25, 12), 25);
+      expect(proratedEntitlement(25, 3), 6); // 6.25
+      expect(proratedEntitlement(25, 6), 13); // 12.5
+      expect(proratedEntitlement(25, 9), 19); // 18.75
+      expect(proratedEntitlement(25, 1), 2); // 2.08
+      expect(proratedEntitlement(24, 3), 6);
+    });
+
+    test('the short period gets prorated days plus what carries in', () {
+      final s = summarize([contract('c', '2026-03-01', 2, months: 3)], [], d('2026-11-26'));
+      expect(s[0].entitlement, 25);
+      expect(s[0].carryOut, 10);
+      expect(s[1].total, 35);
+      // Year 2's 10 carried-in days expire; 10 of its own 25 move on.
+      expect(s[1].carryOut, 10);
+      expect(s[1].forfeit, 25);
+      expect(s[2].entitlement, 6);
+      expect(s[2].carriedIn, 10);
+      expect(s[2].total, 16);
+      expect(s[2].carryOut, 0);
+    });
+
+    test('a contract shorter than a year is one prorated period', () {
+      final s = summarize([contract('c', '2026-03-01', 0, months: 6)], [], d('2026-04-01'));
+      expect(s, hasLength(1));
+      expect(isoDate(s[0].year.end), '2026-08-31');
+      expect(s[0].entitlement, 13);
+      expect(s[0].year.isFinal, isTrue);
+    });
+
+    test('month arithmetic keeps the day where it exists', () {
+      expect(isoDate(addMonths(d('2026-03-01'), 27)), '2028-06-01');
+      expect(isoDate(addMonths(d('2026-01-31'), 1)), '2026-02-28');
+      expect(isoDate(addMonths(d('2026-11-15'), 3)), '2027-02-15');
+    });
+  });
+
+  group('carried-forward days', () {
+    test('are used first', () {
+      final s = summarize(
+        [contract('c', '2025-03-01', 2)],
+        [leave('2025-06-02', '2025-06-13', 10), leave('2026-05-04', '2026-05-08', 4)],
+        d('2026-11-26'),
+      );
+      expect(s[1].carriedIn, 10);
+      expect(s[1].carryUsed, 4);
+      expect(s[1].carryLeft, 6);
+      expect(s[1].baseUsed, 0);
+      expect(s[1].baseLeft, 25);
+      expect(s[1].remaining, 31);
+    });
+
+    test('spill into the current-year entitlement once used up', () {
+      final s = summarize(
+        [contract('c', '2025-03-01', 2)],
+        [leave('2025-06-02', '2025-06-13', 10), leave('2026-05-04', '2026-05-22', 13)],
+        d('2026-11-26'),
+      );
+      expect(s[1].carryUsed, 10);
+      expect(s[1].carryLeft, 0);
+      expect(s[1].baseUsed, 3);
+      expect(s[1].baseLeft, 22);
+      expect(s[1].remaining, 22);
+    });
+
+    test('cannot be carried a second time', () {
+      // Year 2 uses 3 days: 7 carried-in days are left and expire, while its
+      // own untouched 25 can carry 10 into year 3.
+      final s = summarize(
+        [contract('c', '2025-03-01', 3)],
+        [leave('2025-06-02', '2025-06-13', 10), leave('2026-05-04', '2026-05-06', 3)],
+        d('2026-11-26'),
+      );
+      expect(s[1].carryLeft, 7);
+      expect(s[1].carryOut, 10);
+      expect(s[1].forfeit, 22); // 7 carried-in + 15 above the limit
+      expect(s[2].carriedIn, 10);
+    });
+
+    test('only unused own entitlement moves on', () {
+      // Year 2 uses 30: all 10 carried-in plus 20 of its own, leaving 5.
+      final s = summarize(
+        [contract('c', '2025-03-01', 3)],
+        [leave('2025-06-02', '2025-06-13', 10), leave('2026-05-04', '2026-06-12', 30)],
+        d('2026-11-26'),
+      );
+      expect(s[1].baseLeft, 5);
+      expect(s[1].carryOut, 5);
+      expect(s[1].forfeit, 0);
+      expect(s[2].total, 30);
+    });
+  });
+
   group('separate contracts', () {
     test('do not chain; a new contract uses its brought-forward days', () {
       final s = summarize(
@@ -112,11 +239,10 @@ void main() {
     final contracts = [contract('c', '2026-03-01', 2)];
 
     test('28 Feb belongs to year 1 and 1 March to year 2', () {
-      final s = summarize(
-        contracts,
-        [leave('2027-02-26', '2027-02-26', 1), leave('2027-03-01', '2027-03-01', 1)],
-        d('2027-03-01'),
-      );
+      final s = summarize(contracts, [
+        leave('2027-02-26', '2027-02-26', 1),
+        leave('2027-03-01', '2027-03-01', 1),
+      ], d('2027-03-01'));
       expect(s[0].used, 1);
       expect(s[1].used, 1);
       expect(s[1].taken, 1); // leave starting today counts as taken

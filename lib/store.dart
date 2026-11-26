@@ -96,11 +96,11 @@ class LeaveStore extends ChangeNotifier {
 
   /// Everything as text, for copying somewhere safe.
   String exportJson() => const JsonEncoder.withIndent('  ').convert({
-        'app': 'leave_tracker',
-        'version': 1,
-        'contracts': [for (final c in _contracts) c.toJson()],
-        'leaves': [for (final l in _leaves) l.toJson()],
-      });
+    'app': 'leave_tracker',
+    'version': 1,
+    'contracts': [for (final c in _contracts) c.toJson()],
+    'leaves': [for (final l in _leaves) l.toJson()],
+  });
 
   /// Replaces all data with a backup made by [exportJson].
   Future<String?> importJson(String text) async {

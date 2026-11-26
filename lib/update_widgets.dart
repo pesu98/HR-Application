@@ -103,10 +103,12 @@ class UpdateSection extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('App', style: theme.textTheme.titleMedium),
+            const Text('App', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, letterSpacing: -0.35)),
             const SizedBox(height: 4),
             Text(
-              version == null ? 'Updates install here, inside the app.' : 'Version $version. Updates install here, inside the app.',
+              version == null
+                  ? 'Updates install here, inside the app.'
+                  : 'Version $version. Updates install here, inside the app.',
               style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 12),

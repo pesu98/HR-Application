@@ -16,8 +16,7 @@ DateTime? parseIsoDate(Object? value) {
 }
 
 int _idCounter = 0;
-String newId() =>
-    '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-${(_idCounter++).toRadixString(36)}';
+String newId() => '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-${(_idCounter++).toRadixString(36)}';
 
 /// One employment contract. Each year of the contract is its own leave year.
 class Contract {
@@ -25,6 +24,7 @@ class Contract {
     required this.id,
     required this.start,
     required this.years,
+    this.months = 0,
     required this.daysPerYear,
     required this.carryMax,
     required this.broughtForward,
@@ -35,8 +35,14 @@ class Contract {
   /// First day of the contract, e.g. 1 March.
   final DateTime start;
 
-  /// Length of the contract in years.
+  /// Whole years in the contract.
   final int years;
+
+  /// Extra months after the whole years (0-11). A contract of 2 years and
+  /// 3 months ends with a 3-month leave period whose entitlement is prorated.
+  final int months;
+
+  int get totalMonths => years * 12 + months;
 
   /// Leave entitlement for each contract year.
   final double daysPerYear;
@@ -48,18 +54,20 @@ class Contract {
   final double broughtForward;
 
   Map<String, Object?> toJson() => {
-        'id': id,
-        'start': isoDate(start),
-        'years': years,
-        'daysPerYear': daysPerYear,
-        'carryMax': carryMax,
-        'broughtForward': broughtForward,
-      };
+    'id': id,
+    'start': isoDate(start),
+    'years': years,
+    'months': months,
+    'daysPerYear': daysPerYear,
+    'carryMax': carryMax,
+    'broughtForward': broughtForward,
+  };
 
   static Contract? fromJson(Object? json) {
     if (json is! Map) return null;
     final start = parseIsoDate(json['start']);
     final years = json['years'];
+    final months = json['months'];
     final daysPerYear = json['daysPerYear'];
     final carryMax = json['carryMax'];
     final broughtForward = json['broughtForward'];
@@ -70,6 +78,7 @@ class Contract {
       id: json['id'] is String ? json['id'] as String : newId(),
       start: start,
       years: years,
+      months: months is int ? months : 0,
       daysPerYear: daysPerYear.toDouble(),
       carryMax: carryMax.toDouble(),
       broughtForward: broughtForward is num ? broughtForward.toDouble() : 0,
@@ -79,13 +88,7 @@ class Contract {
 
 /// One block of leave, from [start] to [end] inclusive.
 class Leave {
-  const Leave({
-    required this.id,
-    required this.start,
-    required this.end,
-    required this.days,
-    this.note = '',
-  });
+  const Leave({required this.id, required this.start, required this.end, required this.days, this.note = ''});
 
   final String id;
   final DateTime start;
@@ -96,13 +99,7 @@ class Leave {
   final double days;
   final String note;
 
-  Map<String, Object?> toJson() => {
-        'id': id,
-        'start': isoDate(start),
-        'end': isoDate(end),
-        'days': days,
-        'note': note,
-      };
+  Map<String, Object?> toJson() => {'id': id, 'start': isoDate(start), 'end': isoDate(end), 'days': days, 'note': note};
 
   static Leave? fromJson(Object? json) {
     if (json is! Map) return null;

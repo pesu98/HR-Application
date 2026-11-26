@@ -29,14 +29,8 @@ class AppUpdate {
 /// suffix are ignored. Returns a negative number, zero or a positive number
 /// when [a] is older than, the same as, or newer than [b].
 int compareVersions(String a, String b) {
-  List<int> parts(String v) => v
-      .trim()
-      .replaceFirst(RegExp('^v'), '')
-      .split('+')
-      .first
-      .split('.')
-      .map((p) => int.tryParse(p) ?? 0)
-      .toList();
+  List<int> parts(String v) =>
+      v.trim().replaceFirst(RegExp('^v'), '').split('+').first.split('.').map((p) => int.tryParse(p) ?? 0).toList();
   final x = parts(a);
   final y = parts(b);
   for (var i = 0; i < x.length || i < y.length; i++) {
@@ -91,8 +85,7 @@ class GithubUpdateSource implements UpdateSource {
 
   static bool get supported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
-  Future<Map<String, Object?>> _info() async =>
-      await _channel.invokeMapMethod<String, Object?>('info') ?? const {};
+  Future<Map<String, Object?>> _info() async => await _channel.invokeMapMethod<String, Object?>('info') ?? const {};
 
   @override
   Future<String?> currentVersion() async => (await _info())['version'] as String?;

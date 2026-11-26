@@ -1,34 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'home_page.dart';
 import 'leave_calculator.dart';
 import 'models.dart';
 import 'store.dart';
+import 'theme.dart';
 import 'update_widgets.dart';
-import 'updater.dart';
 
-/// Settings: contracts, backup / restore, and app updates.
-class ContractsPage extends StatelessWidget {
-  const ContractsPage({super.key, required this.store, this.updates});
+/// Contract: the contract being viewed, its year-by-year summary, other
+/// contracts, backup and app updates.
+class ContractTab extends StatelessWidget {
+  const ContractTab({super.key, required this.view});
 
-  final LeaveStore store;
+  final LeaveView view;
 
-  /// Null where in-app updates are not supported.
-  final UpdateController? updates;
-
-  Future<void> _openForm(BuildContext context, [Contract? contract]) => Navigator.of(context).push(
-        MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (_) => ContractFormPage(store: store, contract: contract),
-        ),
-      );
+  LeaveStore get _store => view.store;
 
   Future<void> _copyBackup(BuildContext context) async {
-    await Clipboard.setData(ClipboardData(text: store.exportJson()));
+    await Clipboard.setData(ClipboardData(text: _store.exportJson()));
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Backup copied. Paste it into a note or message to yourself.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Backup copied. Paste it into a note or message to yourself.')));
   }
 
   Future<void> _restore(BuildContext context) async {
@@ -46,7 +40,18 @@ class ContractsPage extends StatelessWidget {
             TextField(
               controller: controller,
               maxLines: 6,
-              decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'Paste backup text'),
+              decoration: const InputDecoration(hintText: 'Paste backup text'),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () async {
+                  final clip = await Clipboard.getData(Clipboard.kTextPlain);
+                  controller.text = clip?.text ?? '';
+                },
+                icon: const Icon(Icons.content_paste, size: 16),
+                label: const Text('Paste from clipboard'),
+              ),
             ),
           ],
         ),
@@ -57,62 +62,164 @@ class ContractsPage extends StatelessWidget {
       ),
     );
     if (text == null || !context.mounted) return;
-    final error = await store.importJson(text);
+    final error = await _store.importJson(text);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Backup restored.')));
   }
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: store,
-      builder: (context, _) {
-        final theme = Theme.of(context);
-        final scheme = theme.colorScheme;
-        final today = store.today;
-        final contracts = store.contracts.reversed.toList();
+    final a = view.selected;
+    final contract = view.contract;
+    final others = [
+      for (final c in _store.contracts.reversed)
+        if (c.id != contract?.id) c,
+    ];
 
-        return Scaffold(
-          appBar: AppBar(title: const Text('Settings')),
-          body: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-            children: [
-              Text('Contracts', style: theme.textTheme.titleMedium),
-              const SizedBox(height: 8),
-              if (contracts.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text('No contract yet.', style: TextStyle(color: scheme.onSurfaceVariant)),
+    return ListView(
+      padding: tabPadding,
+      children: [
+        const PageHead('EMPLOYMENT', 'My contract', 'Manage your entitlement and contract period.'),
+        if (a == null || contract == null)
+          SoftCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('No contract yet.', style: subStyle),
+                const SizedBox(height: 12),
+                PrimaryButton(icon: Icons.add, label: 'Add contract', onPressed: () => view.openContract()),
+              ],
+            ),
+          )
+        else ...[
+          SoftCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Bubble(Icons.description_outlined),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            contractTitle(contract),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                          ),
+                          Text('${prettyDate(contract.start)} – ${prettyDate(contractEnd(contract))}', style: subStyle),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              for (final c in contracts)
-                Card(
-                  elevation: 0,
-                  margin: const EdgeInsets.only(bottom: 8),
-                  color: scheme.surfaceContainerLow,
-                  clipBehavior: Clip.antiAlias,
-                  child: ListTile(
-                    onTap: () => _openForm(context, c),
-                    title: Text('${prettyDate(c.start)} – ${prettyDate(contractEnd(c))}'),
-                    subtitle: Text(_describe(c, today)),
-                    trailing: const Icon(Icons.chevron_right),
+                const SizedBox(height: 18),
+                YearTrack(years: view.contractYears, selected: a, onSelect: view.selectYear),
+                const SizedBox(height: 14),
+                _Detail('Annual entitlement', '${formatDays(contract.daysPerYear)} days'),
+                _Detail('Carry-forward limit', '${formatDays(contract.carryMax)} days'),
+                if (contract.broughtForward > 0)
+                  _Detail('Brought forward', '${formatDays(contract.broughtForward)} days'),
+                const SizedBox(height: 12),
+                PrimaryButton(
+                  icon: Icons.edit_outlined,
+                  label: 'Edit contract',
+                  onPressed: () => view.openContract(contract: contract),
+                ),
+              ],
+            ),
+          ),
+          const NoticeBox(
+            child: Text(
+              'Carried-forward days are used first, expire at the end of the next contract year and cannot be '
+              'carried again. Only unused current-year entitlement can transfer, up to the limit. Left-over '
+              'months at the end of a contract get prorated leave. Nothing transfers at the end of the contract.',
+            ),
+          ),
+          const SectionTitle('Year-by-year summary'),
+          for (final y in view.contractYears)
+            SoftCard(
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Text(periodLabel(y.year), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${prettyDate(y.year.start)} – ${prettyDate(y.year.end)}',
+                          style: subStyle,
+                          textAlign: TextAlign.right,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
                   ),
+                  const SizedBox(height: 4),
+                  _Detail(
+                    y.year.isPartial ? 'Prorated + carried in' : 'Annual + carried in',
+                    '${formatDays(y.entitlement)} + ${formatDays(y.carriedIn)}',
+                  ),
+                  _Detail('Carry used first', formatDays(y.carryUsed)),
+                  _Detail('Current-year used', formatDays(y.baseUsed)),
+                  _Detail('Remaining', formatDays(y.remaining)),
+                  _Detail('Eligible next year', formatDays(y.carryOut), accent: true),
+                  _Detail('Unused days expiring', formatDays(y.forfeit), last: true),
+                ],
+              ),
+            ),
+        ],
+        if (others.isNotEmpty) ...[
+          const SectionTitle('Other contracts'),
+          for (final c in others)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Material(
+                color: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(17),
+                  side: const BorderSide(color: AppColors.line),
                 ),
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: FilledButton.tonalIcon(
-                  onPressed: () => _openForm(context),
-                  icon: const Icon(Icons.add),
-                  label: Text(contracts.isEmpty ? 'Add contract' : 'Add new contract'),
+                clipBehavior: Clip.antiAlias,
+                child: ListTile(
+                  onTap: () {
+                    final first = view.all.firstWhere((s) => s.year.contractId == c.id);
+                    view.selectYear(first);
+                  },
+                  title: Text(
+                    '${prettyDate(c.start)} – ${prettyDate(contractEnd(c))}',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                  subtitle: Text('${contractLength(c)} · ${formatDays(c.daysPerYear)} days a year', style: subStyle),
+                  trailing: const Icon(Icons.chevron_right, color: AppColors.muted),
                 ),
               ),
-              const SizedBox(height: 32),
-              Text('Backup', style: theme.textTheme.titleMedium),
-              const SizedBox(height: 4),
-              Text(
-                'Your leave records are kept only on this phone. Copy a backup now and then, '
-                'so you can restore them on a new phone.',
-                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+        ],
+        if (contract != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => view.openContract(),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Add a new contract (renewal)'),
+            ),
+          ),
+        const SizedBox(height: 6),
+        SoftCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Local data',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, letterSpacing: -0.35),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Records are kept only on this phone. Copy a backup now and then, so you can restore them on a new phone.',
+                style: TextStyle(fontSize: 11, color: AppColors.muted, height: 1.55),
               ),
               const SizedBox(height: 12),
               Wrap(
@@ -121,36 +228,54 @@ class ContractsPage extends StatelessWidget {
                 children: [
                   OutlinedButton.icon(
                     onPressed: () => _copyBackup(context),
-                    icon: const Icon(Icons.copy),
+                    icon: const Icon(Icons.copy, size: 18),
                     label: const Text('Copy backup'),
                   ),
                   OutlinedButton.icon(
                     onPressed: () => _restore(context),
-                    icon: const Icon(Icons.restore),
+                    icon: const Icon(Icons.restore, size: 18),
                     label: const Text('Restore'),
                   ),
                 ],
               ),
-              if (updates != null) ...[
-                const SizedBox(height: 32),
-                UpdateSection(updates: updates!),
-              ],
             ],
           ),
-        );
-      },
+        ),
+        if (view.updates != null) SoftCard(child: UpdateSection(updates: view.updates!)),
+      ],
     );
   }
+}
 
-  String _describe(Contract c, DateTime today) {
-    final parts = [
-      '${c.years} ${c.years == 1 ? 'year' : 'years'}',
-      '${formatDays(c.daysPerYear)} days a year',
-      if (c.years > 1) 'carry up to ${formatDays(c.carryMax)}',
-      if (c.broughtForward > 0) '${formatDays(c.broughtForward)} brought forward',
-    ];
-    final current = !today.isBefore(c.start) && !today.isAfter(contractEnd(c));
-    return '${parts.join(' · ')}${current ? '\nCurrent contract' : ''}';
+class _Detail extends StatelessWidget {
+  const _Detail(this.label, this.value, {this.accent = false, this.last = false});
+
+  final String label;
+  final String value;
+  final bool accent;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 11),
+      decoration: BoxDecoration(
+        border: last ? null : const Border(bottom: BorderSide(color: AppColors.line)),
+      ),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: subStyle)),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: accent ? AppColors.accent : AppColors.ink,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -170,6 +295,7 @@ class ContractFormPage extends StatefulWidget {
 class _ContractFormPageState extends State<ContractFormPage> {
   late DateTime _start;
   late int _years;
+  late int _months;
   late final TextEditingController _daysPerYear;
   late final TextEditingController _carryMax;
   late final TextEditingController _broughtForward;
@@ -184,12 +310,14 @@ class _ContractFormPageState extends State<ContractFormPage> {
     super.initState();
     final c = widget.contract;
     final existing = _store.contracts;
-    _start = c?.start ??
+    _start =
+        c?.start ??
         (existing.isEmpty
             // Contracts start on 1 March; suggest the most recent one.
             ? latestAnniversary(_store.today, DateTime.march, 1)
             : contractEnd(existing.last).add(const Duration(days: 1)));
     _years = c?.years ?? 1;
+    _months = c?.months ?? 0;
     _daysPerYear = TextEditingController(text: formatDays(c?.daysPerYear ?? 25));
     _carryMax = TextEditingController(text: formatDays(c?.carryMax ?? 10));
     _broughtForward = TextEditingController(text: formatDays(c?.broughtForward ?? 0));
@@ -229,14 +357,17 @@ class _ContractFormPageState extends State<ContractFormPage> {
       return;
     }
     setState(() => _saving = true);
-    final error = await _store.saveContract(Contract(
-      id: widget.contract?.id ?? newId(),
-      start: _start,
-      years: _years,
-      daysPerYear: daysPerYear,
-      carryMax: carryMax,
-      broughtForward: broughtForward,
-    ));
+    final error = await _store.saveContract(
+      Contract(
+        id: widget.contract?.id ?? newId(),
+        start: _start,
+        years: _years,
+        months: _months,
+        daysPerYear: daysPerYear,
+        carryMax: carryMax,
+        broughtForward: broughtForward,
+      ),
+    );
     if (!mounted) return;
     if (error != null) {
       setState(() {
@@ -258,8 +389,8 @@ class _ContractFormPageState extends State<ContractFormPage> {
         content: Text(
           count == 0
               ? 'No leave is recorded in this contract.'
-              : 'The $count leave ${count == 1 ? 'entry' : 'entries'} recorded in this contract will be deleted too. '
-                  'This cannot be undone.',
+              : 'The $count leave ${count == 1 ? 'record' : 'records'} in this contract will be deleted too. '
+                    'This cannot be undone.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
@@ -272,100 +403,111 @@ class _ContractFormPageState extends State<ContractFormPage> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  /// What the chosen length means, e.g. the end date and the prorated days.
+  String _lengthSummary() {
+    final total = _years * 12 + _months;
+    if (total < 1) return 'Choose at least 1 month.';
+    final end = addMonths(_start, total).subtract(const Duration(days: 1));
+    final perYear = _number(_daysPerYear) ?? 25;
+    final parts = ['Ends ${prettyDate(end)}.'];
+    if (_months > 0) {
+      parts.add(
+        'The ${_years > 0 ? 'last ' : ''}$_months ${_months == 1 ? 'month gets' : 'months get'} '
+        '${daysLabel(proratedEntitlement(perYear, _months))} (prorated from ${formatDays(perYear)}).',
+      );
+    }
+    return parts.join(' ');
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     const numeric = TextInputType.numberWithOptions(decimal: true);
-    final end = DateTime.utc(_start.year + _years, _start.month, _start.day).subtract(const Duration(days: 1));
+    final multiPeriod = _years * 12 + _months > 12;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_editing ? 'Edit contract' : 'Add contract'),
-        actions: [
-          if (_editing)
-            IconButton(tooltip: 'Delete contract', icon: const Icon(Icons.delete_outline), onPressed: _delete),
-        ],
+        leading: IconButton(
+          tooltip: 'Close',
+          icon: const Icon(Icons.close),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: tabPadding,
         children: [
-          Card(
-            elevation: 0,
-            margin: EdgeInsets.zero,
-            color: scheme.surfaceContainerHigh,
-            clipBehavior: Clip.antiAlias,
-            child: ListTile(
-              onTap: _pickStart,
-              leading: const Icon(Icons.calendar_today_outlined),
-              title: const Text('Contract starts'),
-              subtitle: Text(prettyDateLong(_start)),
-              trailing: const Icon(Icons.edit_calendar_outlined),
+          PageHead(
+            'EMPLOYMENT',
+            _editing ? 'Edit contract' : 'Add contract',
+            'Each contract year is its own leave year.',
+          ),
+          SoftCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const FieldLabel('Contract start date'),
+                DateField(date: _start, onTap: _pickStart),
+                const SizedBox(height: 16),
+                const FieldLabel('Contract duration'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        key: const ValueKey('contract-years'),
+                        value: _years,
+                        isExpanded: true,
+                        items: [
+                          for (var n = 0; n <= 5; n++)
+                            DropdownMenuItem(value: n, child: Text('$n ${n == 1 ? 'year' : 'years'}')),
+                        ],
+                        onChanged: (v) => setState(() {
+                          _years = v ?? _years;
+                          _error = null;
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        key: const ValueKey('contract-months'),
+                        value: _months,
+                        isExpanded: true,
+                        items: [
+                          for (var n = 0; n <= 11; n++)
+                            DropdownMenuItem(value: n, child: Text('$n ${n == 1 ? 'month' : 'months'}')),
+                        ],
+                        onChanged: (v) => setState(() {
+                          _months = v ?? _months;
+                          _error = null;
+                        }),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(_lengthSummary(), key: const ValueKey('length-summary'), style: subStyle),
+                const SizedBox(height: 16),
+                const FieldLabel('Annual entitlement (days)'),
+                TextField(controller: _daysPerYear, keyboardType: numeric, onChanged: (_) => setState(() {})),
+                if (multiPeriod) ...[
+                  const SizedBox(height: 16),
+                  const FieldLabel('Carry-forward limit (days)'),
+                  TextField(controller: _carryMax, keyboardType: numeric),
+                ],
+                const SizedBox(height: 16),
+                const FieldLabel('Days brought forward'),
+                TextField(controller: _broughtForward, keyboardType: numeric),
+                const SizedBox(height: 6),
+                const Text('Extra days carried in from before this contract. Usually 0.', style: subStyle),
+                if (_error != null) ...[
+                  const SizedBox(height: 14),
+                  Text(_error!, style: const TextStyle(fontSize: 12, color: AppColors.danger)),
+                ],
+              ],
             ),
           ),
-          const SizedBox(height: 24),
-          Text('Contract length', style: theme.textTheme.titleSmall),
-          const SizedBox(height: 8),
-          SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(value: 1, label: Text('1 year')),
-              ButtonSegment(value: 2, label: Text('2 years')),
-              ButtonSegment(value: 3, label: Text('3 years')),
-            ],
-            selected: {_years},
-            onSelectionChanged: (s) => setState(() {
-              _years = s.first;
-              _error = null;
-            }),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Ends ${prettyDate(end)}. '
-            '${_years == 1 ? 'Unused leave is lost when it ends.' : 'Unused leave carries from one year to the next, up to the limit below.'}',
-            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 24),
-          TextField(
-            controller: _daysPerYear,
-            keyboardType: numeric,
-            decoration: const InputDecoration(
-              labelText: 'Leave days per year',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          if (_years > 1) ...[
-            const SizedBox(height: 16),
-            TextField(
-              controller: _carryMax,
-              keyboardType: numeric,
-              decoration: const InputDecoration(
-                labelText: 'Carry-over limit (days)',
-                helperText: 'Most unused days that move into the next contract year',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-          const SizedBox(height: 16),
-          TextField(
-            controller: _broughtForward,
-            keyboardType: numeric,
-            decoration: const InputDecoration(
-              labelText: 'Days brought forward',
-              helperText: 'Extra days carried in from before this contract. Usually 0.',
-              helperMaxLines: 2,
-              border: OutlineInputBorder(),
-            ),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 16),
-            Text(_error!, style: TextStyle(color: scheme.error)),
-          ],
-          const SizedBox(height: 24),
-          FilledButton(
-            onPressed: _saving ? null : _save,
-            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-            child: Text(_editing ? 'Save changes' : 'Save contract'),
-          ),
+          const SizedBox(height: 6),
+          PrimaryButton(label: _editing ? 'Save contract' : 'Add contract', onPressed: _saving ? null : _save),
+          if (_editing) ...[const SizedBox(height: 12), DangerButton(label: 'Delete contract', onPressed: _delete)],
         ],
       ),
     );

@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 import 'leave_calculator.dart';
 import 'models.dart';
 import 'store.dart';
+import 'theme.dart';
 
-/// Add a new leave, or edit / delete an existing one.
+/// Record a new leave, or edit / delete an existing one.
 class LeaveFormPage extends StatefulWidget {
   const LeaveFormPage({super.key, required this.store, required this.initialDate, this.leave});
 
@@ -66,7 +67,7 @@ class _LeaveFormPageState extends State<LeaveFormPage> {
       initialDate: initial,
       firstDate: first ? earliest : (_start.isBefore(earliest) ? earliest : _start),
       lastDate: latest,
-      helpText: first ? 'First day of leave' : 'Last day of leave',
+      helpText: first ? 'Start date' : 'End date',
     );
     if (picked == null) return;
     final date = dateOnly(picked);
@@ -93,13 +94,9 @@ class _LeaveFormPageState extends State<LeaveFormPage> {
 
   Future<void> _save() async {
     setState(() => _saving = true);
-    final error = await _store.saveLeave(Leave(
-      id: widget.leave?.id ?? newId(),
-      start: _start,
-      end: _end,
-      days: _days,
-      note: _note.text.trim(),
-    ));
+    final error = await _store.saveLeave(
+      Leave(id: widget.leave?.id ?? newId(), start: _start, end: _end, days: _days, note: _note.text.trim()),
+    );
     if (!mounted) return;
     if (error != null) {
       setState(() {
@@ -116,7 +113,7 @@ class _LeaveFormPageState extends State<LeaveFormPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete this leave?'),
+        title: const Text('Delete this leave record?'),
         content: Text(
           '${prettyRange(leave.start, leave.end)} · ${daysLabel(leave.days)} will go back to your balance.',
         ),
@@ -131,128 +128,146 @@ class _LeaveFormPageState extends State<LeaveFormPage> {
     if (mounted) Navigator.of(context).pop();
   }
 
-  /// Days left in the leave year after this leave, or null when the dates
-  /// are outside every contract.
-  double? _leftAfter() {
+  /// The balance of the period that [_start] falls in, without this leave;
+  /// null when the date is outside every contract.
+  YearSummary? _periodWithoutThis() {
     final others = [
       for (final l in _store.leaves)
         if (l.id != widget.leave?.id) l,
     ];
     for (final s in summarize(_store.contracts, others, _store.today)) {
-      if (s.year.contains(_start)) return s.remaining - _days;
+      if (s.year.contains(_start)) return s;
     }
     return null;
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     final weekdays = workingDays(_start, _end);
-    final leftAfter = _leftAfter();
+    final period = _periodWithoutThis();
+    final leftAfter = period == null ? null : period.remaining - _days;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_editing ? 'Edit leave' : 'Add leave'),
-        actions: [
-          if (_editing)
-            IconButton(tooltip: 'Delete leave', icon: const Icon(Icons.delete_outline), onPressed: _delete),
-        ],
+        leading: IconButton(
+          tooltip: 'Close',
+          icon: const Icon(Icons.close),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
         children: [
-          _DateTile(label: 'First day', date: _start, onTap: () => _pick(first: true)),
-          const SizedBox(height: 8),
-          _DateTile(label: 'Last day', date: _end, onTap: () => _pick(first: false)),
-          const SizedBox(height: 24),
-          Text('Leave days to deduct', style: theme.textTheme.titleSmall),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              IconButton.filledTonal(
-                tooltip: 'Half a day less',
-                onPressed: _days > 0.5 ? () => _step(-0.5) : null,
-                icon: const Icon(Icons.remove),
-              ),
-              Expanded(
-                child: Text(
-                  formatDays(_days),
-                  key: const ValueKey('leave-days'),
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.displaySmall,
+          _editing
+              ? const PageHead('LEAVE RECORD', 'Annual leave', 'Change the dates or days, or delete the record.')
+              : const PageHead('NEW RECORD', 'Time for a break.', 'Record the leave you have applied for.'),
+          if (period != null)
+            NoticeBox(
+              warn: leftAfter! < 0,
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: '${daysLabel(period.remaining)} available',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    TextSpan(text: ' · ${periodLabel(period.year)}\n'),
+                    TextSpan(
+                      text: leftAfter < 0
+                          ? 'This is ${daysLabel(-leftAfter)} more than you have left.'
+                          : 'After this you will have ${daysLabel(leftAfter)} left.',
+                    ),
+                    if (period.carryLeft > 0)
+                      TextSpan(text: ' ${daysLabel(period.carryLeft)} carried forward will be used first.'),
+                  ],
                 ),
               ),
-              IconButton.filledTonal(
-                tooltip: 'Half a day more',
-                onPressed: _days < calendarDays(_start, _end) ? () => _step(0.5) : null,
-                icon: const Icon(Icons.add),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '$weekdays ${weekdays == 1 ? 'weekday' : 'weekdays'} (Mon–Fri) in these dates. '
-            'Lower it for a public holiday or a half day.',
-            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 24),
-          TextField(
-            controller: _note,
-            textCapitalization: TextCapitalization.sentences,
-            maxLength: 120,
-            decoration: const InputDecoration(
-              labelText: 'Note (optional)',
-              hintText: 'e.g. Balik kampung',
-              border: OutlineInputBorder(),
+            ),
+          SoftCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const FieldLabel('Start date'),
+                          DateField(key: const ValueKey('start-date'), date: _start, onTap: () => _pick(first: true)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                const FieldLabel('End date'),
+                DateField(key: const ValueKey('end-date'), date: _end, onTap: () => _pick(first: false)),
+                const SizedBox(height: 16),
+                const FieldLabel('Chargeable days'),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.field,
+                    border: Border.all(color: AppColors.line),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Half a day less',
+                        onPressed: _days > 0.5 ? () => _step(-0.5) : null,
+                        icon: const Icon(Icons.remove_circle_outline),
+                        color: AppColors.accent,
+                      ),
+                      Expanded(
+                        child: Text(
+                          formatDays(_days),
+                          key: const ValueKey('leave-days'),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Half a day more',
+                        onPressed: _days < calendarDays(_start, _end) ? () => _step(0.5) : null,
+                        icon: const Icon(Icons.add_circle_outline),
+                        color: AppColors.accent,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '$weekdays ${weekdays == 1 ? 'weekday' : 'weekdays'} (Mon–Fri) in these dates. '
+                  'Lower it for a public holiday or a half day.',
+                  style: subStyle,
+                ),
+                const SizedBox(height: 16),
+                const FieldLabel('Remarks (optional)'),
+                TextField(
+                  controller: _note,
+                  textCapitalization: TextCapitalization.sentences,
+                  maxLength: 120,
+                  maxLines: 2,
+                  minLines: 1,
+                  decoration: const InputDecoration(hintText: 'Personal matters…', counterText: ''),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(_error!, style: const TextStyle(fontSize: 12, color: AppColors.danger)),
+                ],
+              ],
             ),
           ),
-          if (leftAfter != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              leftAfter < 0
-                  ? 'This is ${daysLabel(-leftAfter)} more than you have left in that leave year.'
-                  : 'After this you will have ${daysLabel(leftAfter)} left in that leave year.',
-              style: theme.textTheme.bodyMedium?.copyWith(color: leftAfter < 0 ? scheme.error : null),
-            ),
-          ],
-          if (_error != null) ...[
-            const SizedBox(height: 16),
-            Text(_error!, style: TextStyle(color: scheme.error)),
-          ],
-          const SizedBox(height: 24),
-          FilledButton(
+          const SizedBox(height: 6),
+          PrimaryButton(
+            icon: Icons.check,
+            label: _editing ? 'Update record' : 'Save leave record',
             onPressed: _saving ? null : _save,
-            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-            child: Text(_editing ? 'Save changes' : 'Save leave'),
           ),
+          if (_editing) ...[const SizedBox(height: 12), DangerButton(label: 'Delete record', onPressed: _delete)],
         ],
-      ),
-    );
-  }
-}
-
-class _DateTile extends StatelessWidget {
-  const _DateTile({required this.label, required this.date, required this.onTap});
-
-  final String label;
-  final DateTime date;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      elevation: 0,
-      margin: EdgeInsets.zero,
-      color: scheme.surfaceContainerHigh,
-      clipBehavior: Clip.antiAlias,
-      child: ListTile(
-        onTap: onTap,
-        leading: const Icon(Icons.calendar_today_outlined),
-        title: Text(label),
-        subtitle: Text(prettyDateLong(date)),
-        trailing: const Icon(Icons.edit_calendar_outlined),
       ),
     );
   }

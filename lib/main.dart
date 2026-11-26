@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'home_page.dart';
 import 'store.dart';
+import 'theme.dart';
 import 'updater.dart';
 
 Future<void> main() async {
@@ -23,15 +24,12 @@ class LeaveApp extends StatelessWidget {
   /// Null where in-app updates are not supported.
   final UpdateController? updates;
 
-  static const _seed = Color(0xFF0F766E);
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Annual Leave',
+      title: 'myLeave',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorSchemeSeed: _seed, brightness: Brightness.light),
-      darkTheme: ThemeData(colorSchemeSeed: _seed, brightness: Brightness.dark),
+      theme: buildTheme(),
       home: HomePage(store: store, updates: updates),
     );
   }

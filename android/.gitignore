@@ -12,3 +12,6 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# Copies of the signing secrets for pasting into GitHub; never commit.
+secret-*.txt

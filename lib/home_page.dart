@@ -5,13 +5,18 @@ import 'leave_calculator.dart';
 import 'leave_form_page.dart';
 import 'models.dart';
 import 'store.dart';
+import 'update_widgets.dart';
+import 'updater.dart';
 
 /// The main screen: how many days are left in a leave year, and the leave
 /// recorded in it.
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.store});
+  const HomePage({super.key, required this.store, this.updates});
 
   final LeaveStore store;
+
+  /// Null where in-app updates are not supported.
+  final UpdateController? updates;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -33,7 +38,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openContracts() => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => ContractsPage(store: _store)),
+        MaterialPageRoute(builder: (_) => ContractsPage(store: _store, updates: widget.updates)),
       );
 
   Future<void> _addContract() => Navigator.of(context).push(
@@ -72,7 +77,7 @@ class _HomePageState extends State<HomePage> {
             title: const Text('Annual Leave'),
             actions: [
               IconButton(
-                tooltip: 'Contracts and backup',
+                tooltip: 'Settings',
                 icon: const Icon(Icons.settings_outlined),
                 onPressed: _openContracts,
               ),
@@ -90,6 +95,8 @@ class _HomePageState extends State<HomePage> {
               : ListView(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
                   children: [
+                    if (widget.updates != null)
+                      UpdateBanner(updates: widget.updates!, margin: const EdgeInsets.only(bottom: 8)),
                     _YearSwitcher(
                       summary: selected,
                       onPrevious: index > 0

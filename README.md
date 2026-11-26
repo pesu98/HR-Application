@@ -24,8 +24,40 @@ how many days you will lose if you do not use them.
 
 ## Data
 
-Everything is stored on the phone only. Use **Contracts → Copy backup** to copy
+Everything is stored on the phone only. Use **Settings → Copy backup** to copy
 all records as text, and **Restore** to paste them back on a new phone.
+
+## Updates happen inside the app
+
+You install the APK by hand only once. After that:
+
+1. Code is pushed to `main`.
+2. GitHub Actions (`.github/workflows/release.yml`) runs the tests, builds a
+   signed APK with version `1.0.<run number>` and publishes it as a GitHub
+   release.
+3. When the app is opened it asks GitHub for the latest release. If it is newer
+   it shows "Version … is available" with an **Update** button, downloads the
+   APK itself and opens the Android installer. Leave records are kept.
+
+Android shows its own "Install" confirmation, and the first time asks you to
+allow this app to install updates. That prompt cannot be skipped by any app
+outside the Play Store.
+
+### Signing key (one-time setup)
+
+Android refuses an update that is signed with a different key from the
+installed app, so every release must use the same key.
+
+- The key lives in `android/upload-keystore.jks` with its password in
+  `android/key.properties`. Both are ignored by git. **Keep a copy of both
+  somewhere safe** — without them no future build can update an installed app.
+- GitHub Actions needs the same key as two repository secrets
+  (Settings → Secrets and variables → Actions):
+  - `KEYSTORE_BASE64` — the keystore file, base64-encoded
+  - `KEYSTORE_PASSWORD` — the `storePassword` value from `key.properties`
+
+Until both secrets exist the workflow still tests and builds, but publishes no
+release.
 
 ## Develop
 
@@ -52,4 +84,7 @@ The APK is written to `build/app/outputs/flutter-apk/app-release.apk`.
 | `lib/store.dart` | Saves and loads the data on the device |
 | `lib/home_page.dart` | Days-left screen |
 | `lib/leave_form_page.dart` | Add / edit a leave |
-| `lib/contracts_page.dart` | Contracts and backup |
+| `lib/contracts_page.dart` | Settings: contracts, backup, app version |
+| `lib/updater.dart` | Finds, downloads and installs a newer release |
+| `lib/update_widgets.dart` | The "Update" banner and settings section |
+| `android/.../MainActivity.kt` | Hands the downloaded APK to the Android installer |

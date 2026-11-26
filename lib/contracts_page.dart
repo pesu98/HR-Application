@@ -4,12 +4,17 @@ import 'package:flutter/services.dart';
 import 'leave_calculator.dart';
 import 'models.dart';
 import 'store.dart';
+import 'update_widgets.dart';
+import 'updater.dart';
 
-/// Lists contracts and offers backup / restore.
+/// Settings: contracts, backup / restore, and app updates.
 class ContractsPage extends StatelessWidget {
-  const ContractsPage({super.key, required this.store});
+  const ContractsPage({super.key, required this.store, this.updates});
 
   final LeaveStore store;
+
+  /// Null where in-app updates are not supported.
+  final UpdateController? updates;
 
   Future<void> _openForm(BuildContext context, [Contract? contract]) => Navigator.of(context).push(
         MaterialPageRoute(
@@ -68,13 +73,15 @@ class ContractsPage extends StatelessWidget {
         final contracts = store.contracts.reversed.toList();
 
         return Scaffold(
-          appBar: AppBar(title: const Text('Contracts')),
+          appBar: AppBar(title: const Text('Settings')),
           body: ListView(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
             children: [
+              Text('Contracts', style: theme.textTheme.titleMedium),
+              const SizedBox(height: 8),
               if (contracts.isEmpty)
                 Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.only(bottom: 12),
                   child: Text('No contract yet.', style: TextStyle(color: scheme.onSurfaceVariant)),
                 ),
               for (final c in contracts)
@@ -124,6 +131,10 @@ class ContractsPage extends StatelessWidget {
                   ),
                 ],
               ),
+              if (updates != null) ...[
+                const SizedBox(height: 32),
+                UpdateSection(updates: updates!),
+              ],
             ],
           ),
         );
